@@ -67,15 +67,18 @@ def setup(args):
     num_params = count_parameters(model)
 
     logger.info("{}".format(config))
-    logger.info("Training parameters %s", args)
-    logger.info("Total Parameter: \t%2.1fM" % num_params)
+    
+    for key, value in vars(args).items():
+        logging.info(f"{key}: {value}")
+        #logger.info("Training parameters %s", arg)
+    logger.info("#Trainable Parameter: \t%2.2fM" % num_params)
     print(num_params)
     return args, model
 
 
 def count_parameters(model):
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return params/1000000
+    return params/1000000.
 
 
 def set_seed(args):
