@@ -54,6 +54,10 @@ def save_model(args, model):
     torch.save(model_to_save.state_dict(), model_checkpoint)
     logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
+def load_model(pretrained_dir, model):
+    model_dict = torch.load(pretrained_dir)
+    model.load_state_dict(model_dict)
+    logger.info("Loaded model checkpoint from [DIR: %s]", pretrained_dir)
 
 def setup(args):
     # Prepare model
@@ -62,7 +66,10 @@ def setup(args):
     num_classes = 10 if args.dataset == "cifar10" else 100
 
     model = VisionTransformer(config, args.img_size, zero_head=True, num_classes=num_classes)
-    model.load_from(np.load(args.pretrained_dir))
+    try:
+        model.load_from(np.load(args.pretrained_dir))
+    except:
+        load_model(args.pretrained_dir, model)
     model.to(args.device)
     num_params = count_parameters(model)
 
@@ -136,8 +143,8 @@ def valid(args, model, writer, test_loader, global_step):
     logger.info("Global Steps: %d" % global_step)
     logger.info("Valid Loss: %2.5f" % eval_losses.avg)
     logger.info("Valid Accuracy: %2.5f" % accuracy)
-
-    writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
+    if writer is not None:
+        writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
 
 
@@ -253,6 +260,7 @@ def main():
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
                         help="Which variant to use.")
+    parser.add_argument("--test_mode", action="store_true")
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
     parser.add_argument("--output_dir", default="output", type=str,
@@ -314,6 +322,7 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
+                        
     logger.warning("Process rank: %s, device: %s, n_gpu: %s, distributed training: %s, 16-bits training: %s" %
                    (args.local_rank, args.device, args.n_gpu, bool(args.local_rank != -1), args.fp16))
 
@@ -323,8 +332,14 @@ def main():
     # Model & Tokenizer Setup
     args, model = setup(args)
 
-    # Training
-    train(args, model)
+    if not args.test_mode:
+        # Training
+        train(args, model)
+    else:
+        _, test_loader = get_loader(args)
+        global_step = -1
+        accuracy = valid(args, model, None, test_loader, global_step)
+        print("Test accuracy: ", accuracy)
 
 
 if __name__ == "__main__":
