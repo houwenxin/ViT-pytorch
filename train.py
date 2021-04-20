@@ -48,20 +48,26 @@ def simple_accuracy(preds, labels):
     return (preds == labels).mean()
 
 
-def save_model(args, model):
+def save_model(args, model, global_step=None):
     model_to_save = model.module if hasattr(model, 'module') else model
-    model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
+    if global_step is not None:
+        model_checkpoint = os.path.join(args.output_dir, f"{args.name}_{global_step}_checkpoint.bin" % args.name)
+    else:
+        model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
     torch.save(model_to_save.state_dict(), model_checkpoint)
-    logger.info("Saved model checkpoint to [DIR: %s]", args.output_dir)
+    print("Saved model checkpoint to [DIR: %s]", args.output_dir)
 
 def load_model(pretrained_dir, model):
     model_dict = torch.load(pretrained_dir)
     model.load_state_dict(model_dict)
-    logger.info("Loaded model checkpoint from [DIR: %s]", pretrained_dir)
+    print("Loaded model checkpoint from [DIR: %s]", pretrained_dir)
 
 def setup(args):
     # Prepare model
     config = CONFIGS[args.model_type]
+    config.mixup = args.mixup
+    config.mixup_layer = args.mixup_layer
+    config.mixup_alpha = args.mixup_alpha
 
     num_classes = 10 if args.dataset == "cifar10" else 100
 
@@ -73,12 +79,12 @@ def setup(args):
     model.to(args.device)
     num_params = count_parameters(model)
 
-    logger.info("{}".format(config))
+    print("{}".format(config))
     
     for key, value in vars(args).items():
         logging.info(f"{key}: {value}")
-        #logger.info("Training parameters %s", arg)
-    logger.info("#Trainable Parameter: \t%2.2fM" % num_params)
+        #print("Training parameters %s", arg)
+    print("#Trainable Parameter: \t%2.2fM" % num_params)
     print(num_params)
     return args, model
 
@@ -100,9 +106,9 @@ def valid(args, model, writer, test_loader, global_step):
     # Validation!
     eval_losses = AverageMeter()
 
-    logger.info("***** Running Validation *****")
-    logger.info("  Num steps = %d", len(test_loader))
-    logger.info("  Batch size = %d", args.eval_batch_size)
+    print("***** Running Validation *****")
+    print("  Num steps = %d", len(test_loader))
+    print("  Batch size = %d", args.eval_batch_size)
 
     model.eval()
     all_preds, all_label = [], []
@@ -138,15 +144,14 @@ def valid(args, model, writer, test_loader, global_step):
     all_preds, all_label = all_preds[0], all_label[0]
     accuracy = simple_accuracy(all_preds, all_label)
 
-    logger.info("\n")
-    logger.info("Validation Results")
-    logger.info("Global Steps: %d" % global_step)
-    logger.info("Valid Loss: %2.5f" % eval_losses.avg)
-    logger.info("Valid Accuracy: %2.5f" % accuracy)
+    print("\n")
+    print("Validation Results")
+    print("Global Steps: %d" % global_step)
+    print("Valid Loss: %2.5f" % eval_losses.avg)
+    print("Valid Accuracy: %2.5f" % accuracy)
     if writer is not None:
         writer.add_scalar("test/accuracy", scalar_value=accuracy, global_step=global_step)
     return accuracy
-
 
 def train(args, model):
     """ Train the model """
@@ -181,13 +186,13 @@ def train(args, model):
         model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
 
     # Train!
-    logger.info("***** Running training *****")
-    logger.info("  Total optimization steps = %d", args.num_steps)
-    logger.info("  Instantaneous batch size per GPU = %d", args.train_batch_size)
-    logger.info("  Total train batch size (w. parallel, distributed & accumulation) = %d",
+    print("***** Running training *****")
+    print("  Total optimization steps = ", args.num_steps)
+    print("  Instantaneous batch size per GPU = ", args.train_batch_size)
+    print("  Total train batch size (w. parallel, distributed & accumulation) = ",
                 args.train_batch_size * args.gradient_accumulation_steps * (
                     torch.distributed.get_world_size() if args.local_rank != -1 else 1))
-    logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
+    print("  Gradient Accumulation steps = ", args.gradient_accumulation_steps)
 
     model.zero_grad()
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
@@ -233,7 +238,7 @@ def train(args, model):
                 if global_step % args.eval_every == 0 and args.local_rank in [-1, 0]:
                     accuracy = valid(args, model, writer, test_loader, global_step)
                     if best_acc < accuracy:
-                        save_model(args, model)
+                        save_model(args, model, global_step)
                         best_acc = accuracy
                     model.train()
 
@@ -245,8 +250,8 @@ def train(args, model):
 
     if args.local_rank in [-1, 0]:
         writer.close()
-    logger.info("Best Accuracy: \t%f" % best_acc)
-    logger.info("End Training!")
+    print("Best Accuracy: \t%f" % best_acc)
+    print("End Training!")
 
 
 def main():
@@ -260,7 +265,12 @@ def main():
                                                  "ViT-L_32", "ViT-H_14", "R50-ViT-B_16"],
                         default="ViT-B_16",
                         help="Which variant to use.")
+
     parser.add_argument("--test_mode", action="store_true")
+    parser.add_argument("--mixup", action="store_true")
+    parser.add_argument("--mixup_layer", type=int, default=0)
+    parser.add_argument("--mixup_alpha", type=float, default=1.0)
+
     parser.add_argument("--pretrained_dir", type=str, default="checkpoint/ViT-B_16.npz",
                         help="Where to search for pretrained ViT models.")
     parser.add_argument("--output_dir", default="output", type=str,

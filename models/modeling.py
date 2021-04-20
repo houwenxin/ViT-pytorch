@@ -21,6 +21,8 @@ import models.configs as configs
 
 from .modeling_resnet import ResNetV2
 
+import random
+from utils.data_utils import mixup_data, mixup_criterion
 
 logger = logging.getLogger(__name__)
 
@@ -253,10 +255,31 @@ class Transformer(nn.Module):
         self.embeddings = Embeddings(config, img_size=img_size)
         self.encoder = Encoder(config, vis)
 
-    def forward(self, input_ids):
-        embedding_output = self.embeddings(input_ids)
-        encoded, attn_weights = self.encoder(embedding_output)
-        return encoded, attn_weights
+        self.mixup = config.mixup
+        self.mixup_layer = config.mixup_layer
+        self.mixup_alpha = config.mixup_alpha
+    def forward(self, input_ids, labels=None):
+        out = input_ids
+        if self.mixup and self.training:
+            mixup_layer = self.mixup_layer
+            if mixup_layer == None or mixup_layer < 0:
+                mixup_layer = random.randint(0,2)
+            if mixup_layer == 0:
+                out, y_a, y_b, lam = mixup_data(out, labels, self.mixup_alpha)
+                labels = (y_a, y_b, lam)
+        out = self.embeddings(out)
+        
+        # Encoder forward
+        attn_weights = []
+        for layer_idx, layer_block in enumerate(self.encoder.layer, 1):
+            if self.mixup and self.training and layer_idx == mixup_layer:
+                out, y_a, y_b, lam = mixup_data(out, labels, self.mixup_alpha)
+                labels = (y_a, y_b, lam)
+            out, weights = layer_block(out)
+            if self.encoder.vis:
+                attn_weights.append(weights)
+        encoded = self.encoder.encoder_norm(out)
+        return encoded, attn_weights, labels
 
 
 class VisionTransformer(nn.Module):
@@ -270,12 +293,15 @@ class VisionTransformer(nn.Module):
         self.head = Linear(config.hidden_size, num_classes)
 
     def forward(self, x, labels=None):
-        x, attn_weights = self.transformer(x)
+        x, attn_weights, labels = self.transformer(x, labels=labels)
         logits = self.head(x[:, 0])
 
         if labels is not None:
-            loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
+            criterion = CrossEntropyLoss()
+            loss_fct = mixup_criterion(*labels)
+            loss = loss_fct(criterion, logits)
+            # loss_fct = CrossEntropyLoss()
+            # loss = loss_fct(logits.view(-1, self.num_classes), labels.view(-1))
             return loss
         else:
             return logits, attn_weights
