@@ -354,3 +354,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# CUDA_VISIBLE_DEVICES=0,1,2,3 python3 -m torch.distributed.launch --nproc_per_node=4 train.py --train_batch_size 128 --name cifar10-100_500 --dataset cifar10 --model_type ViT-B_16 --pretrained_dir checkpoint/ViT-B_16.npz
